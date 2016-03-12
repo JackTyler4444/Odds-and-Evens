@@ -1,0 +1,21 @@
+contract GetHash {
+    //used for Odds and Evens game
+    //input players intended choice for Odds and Evens
+    //with secret input some random 32 byte number
+    //https://www.random.org/bytes/
+    //Outputs hash for Odds and Evens player choice
+    bytes32 public hashOutput;
+    uint public valueOut;
+    bytes32 public secretOut;
+    
+    function hash(uint _values, bytes32 _secret) {
+        hashOutput = sha3(_values, _secret);
+        
+        valueOut = _values;
+        secretOut = _secret;
+    }
+    
+    function refund() {
+       msg.sender.send(this.balance);
+    }
+}
