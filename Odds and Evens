@@ -1,0 +1,195 @@
+contract OddsAndEvens2
+{
+    struct Choice
+    {
+        bytes32 blindedChoice;
+        uint deposit;
+    }
+    
+    uint public gameStart;
+    uint public choosingEnd;
+    uint public tempRevealTime;
+    uint public revealEnd;
+    bool public ended;
+ 
+    string public OddsOrEvens;
+    
+    address public playerOneAddress;
+    address public playerTwoAddress;
+    address public gameWinner;
+    
+    uint public choiceCount;
+    uint public revealCount;
+    uint public playerOneChoice;
+    uint public playerTwoChoice;
+    
+    bool public  playerOneRevealed;
+    bool public  playerTwoRevealed;
+    
+    uint public playerOneDeposit;
+    
+    uint public refundLowBid;
+    uint public refundHighBid;
+     
+    mapping(address => Choice[]) public choices;
+
+    event gameEnded(address winner, string OddsOrEvens);
+
+    /// Modifiers are a convenient way to validate inputs to
+    /// functions. `onlyBefore` is applied to `bid` below:
+    /// The new function body is the modifier's body where
+    /// `_` is replaced by the old function body.
+    modifier onlyBefore(uint _time) { if (now >= _time) throw; _ }
+    modifier onlyAfter(uint _time) { if (now <= _time) throw; _ }
+
+    //starts game with inputs for choosing end and reveal end
+    function OddsAndEvens(uint _choosingTime,
+                            uint _revealTime)
+    {
+        gameStart = now;
+        choosingEnd = now + _choosingTime;
+        revealEnd = choosingEnd + _revealTime;
+        tempRevealTime = _revealTime;
+    }
+
+    ///Each player enters 32 byte hash of value and 32 byte secret
+    function choice(bytes32 _blindedChoice)
+        onlyBefore(choosingEnd)
+     {   
+        //refund player 2 if player 2's bet isn't high enough 
+        if ((choiceCount == 1) && (playerOneDeposit > msg.value)){
+            OddsOrEvens = "Bet must be bigger!";
+            gameEnded(playerTwoAddress, OddsOrEvens);
+            refundLowBid = msg.value;
+            msg.sender.send(refundLowBid);
+            return;
+        }
+        //refund player 2 excess bet over player one's bet
+        if ((choiceCount == 1) && (playerOneDeposit < msg.value)){
+            OddsOrEvens = "Bet must be bigger!";
+            gameEnded(playerTwoAddress, OddsOrEvens);
+            refundHighBid = msg.value - playerOneDeposit;
+            msg.sender.send(refundHighBid);
+        }
+        //pushes choice and msg.value into choices array 
+        //future possiblity to add multiple choices
+        choices[msg.sender].push(Choice({
+            blindedChoice: _blindedChoice,
+            deposit: msg.value
+        }));
+        //raise the counter for every choice made
+        if (choiceCount == 0){
+        // set firstplayer address and deposit on first choice
+            playerOneAddress = msg.sender;
+            playerOneDeposit = msg.value;
+        }
+        // if first choice made set 2nd player's address
+        if (choiceCount == 1){
+            playerTwoAddress = msg.sender;
+        }
+        //after choice is made raise the choice counter
+        choiceCount += 1;
+        //if 2 choices have been made end choosing period
+        //clears OddsOrEvens field in case it is full from choosing error
+        if (choiceCount == 2){
+           choosingEnd = now;
+           OddsOrEvens = "";
+           revealEnd = now + tempRevealTime;
+        }   
+    }
+    ///first player can refund provided 2nd player hasn't choosen
+    function refundChoice()
+        onlyBefore(choosingEnd)
+     {   
+       if (choiceCount == 1){
+             playerOneAddress.send(playerOneDeposit);
+             OddsOrEvens = "P1 Refund";
+             gameEnded(playerOneAddress, OddsOrEvens);
+             choiceCount = 0;
+        }   
+     }
+ 
+    ///players enter their choice plus their secret
+    function reveal(uint _values, bytes32 _secret)
+        onlyAfter(choosingEnd)
+        onlyBefore(revealEnd)
+    {
+        var choice = choices[msg.sender][0];
+        
+        var (value, secret) = (_values, _secret);
+        //if the hash of the value and secret isn't equal to 
+        //the previously provided hash then throw the attempt
+        //to reveal
+        if (choice.blindedChoice != sha3(_values, _secret)){
+            throw;
+        }
+        
+        //if bidding time ends with only one entry, refund that entry
+        if (choiceCount == 1){
+             revealEnd = now;
+             playerOneAddress.send(this.balance);
+             OddsOrEvens = "P1 Refund";
+             gameEnded(playerOneAddress, OddsOrEvens);
+             ended = true;
+             return;
+        }
+        //if player 1 revealed for first time then add to the reveal count
+        if (playerOneAddress == msg.sender && playerOneRevealed != true){
+            playerOneRevealed = true;
+            playerOneChoice = _values;
+            revealCount += 1;
+        }
+        //if player 2 revealed for first time then add to the reveal count
+        if (playerTwoAddress == msg.sender && playerTwoRevealed != true){
+            playerTwoRevealed = true;
+            playerTwoChoice = _values;
+            revealCount += 1;
+        }
+        //if both players revealed then end reveal period
+        if (revealCount == 2){
+            revealEnd = now;
+        }
+    }        
+    //add up reveals, determine and pay winner
+    function gameEnd()
+        onlyAfter(revealEnd)
+    {
+        // throw any attempts after game is ended
+        if (ended) throw;
+        //if only one player revealed then refund that player
+        if (revealCount == 1){
+            if (playerOneRevealed == true){
+                playerOneAddress.send(this.balance);
+                OddsOrEvens = "P1 Refund";
+                gameEnded(playerOneAddress, OddsOrEvens);
+                ended = true;
+                return;
+            }
+            if (playerTwoRevealed == true){
+                playerTwoAddress.send(this.balance); 
+                OddsOrEvens = "P2 Refund";
+                gameEnded(playerTwoAddress, OddsOrEvens);
+                ended = true;
+                return;
+            }
+        }
+        uint sumChoices;
+        sumChoices = playerOneChoice + playerTwoChoice;
+        //determine if odd
+        if (sumChoices % 2 != 0){
+            gameWinner = playerOneAddress;
+            OddsOrEvens = "Odd";
+        }
+        //determine if even
+        if (sumChoices % 2 == 0){
+            gameWinner = playerTwoAddress;
+            OddsOrEvens = "Even";
+        }
+        //payout winner
+        gameEnded(gameWinner, OddsOrEvens);
+        gameWinner.send(this.balance);
+        ended = true;
+    }
+
+    function () { throw; }
+}
